@@ -2,6 +2,8 @@ struct CPU {
     registers: [u8; 16],
     position_in_memory: usize,
     memory: [u8; 0x1000],
+    stack: [u16; 16],
+    stack_pointer: usize,
 }
 
 impl CPU {
@@ -27,6 +29,29 @@ impl CPU {
         }
     }
 
+    fn call(&mut self, address: u16) {
+        let pointer = self.stack_pointer;
+        let stack = &mut self.stack;
+
+        if pointer > stack.len() {
+            panic!("Stack overflow");
+        }
+
+        stack[pointer] = self.position_in_memory as u16;
+        self.stack_pointer += 1;
+        self.position_in_memory = address as usize;
+    }
+
+    fn ret(&mut self) {
+        if self.stack_pointer == 0 {
+            panic!("Stack underflow");
+        }
+
+        self.stack_pointer -= 1;
+        let call_address = self.stack[self.stack_pointer];
+        self.position_in_memory = call_address as usize;
+    }
+
     fn run(&mut self) {
         loop {
             let opcode = self.read_opcode();
@@ -37,10 +62,14 @@ impl CPU {
             let y = ((opcode & 0x00F0) >> 4) as u8;
             let d = (opcode & 0x000F) as u8;
 
+            let nnn = opcode & 0x0FFF;
+
             match (c, x, y, d) {
                 (0, 0, 0, 0) => {
                     return;
                 }
+                (0, 0, 0xE, 0xE) => self.ret(),
+                (0x2, _, _, _) => self.call(nnn),
                 (0x8, _, _, 0x4) => self.add_xy(x, y),
                 _ => todo!("need to implement opcode {:04x}", opcode),
             }
@@ -53,24 +82,35 @@ fn main() {
         registers: [0; 16],
         memory: [0; 4096],
         position_in_memory: 0,
+        stack: [0; 16],
+        stack_pointer: 0,
     };
 
     cpu.registers[0] = 5;
     cpu.registers[1] = 10;
-    cpu.registers[2] = 15;
-    cpu.registers[3] = 20;
 
     let mem = &mut cpu.memory;
-    mem[0] = 0x80; // adds to register 0 ...
-    mem[1] = 0x14; // ... from register 1
-    mem[2] = 0x80; // adds to register 0 ...
-    mem[3] = 0x24; // ... from register 2
-    mem[4] = 0x80; // adds to register 0 ...
-    mem[5] = 0x34; // ... from register 3
+    mem[0x000] = 0x21; // (1) Call function at 0x100 (add 10 to 5) ...
+    mem[0x001] = 0x00; // ... which will follow to 0x102 (add 10 more)
+
+    mem[0x002] = 0x21; // (5) Will repeat the previous func call, which will add
+    mem[0x003] = 0x00; // 10 + 10 to register 0 again
+
+    mem[0x004] = 0x00; // (9) Quit the CPU run
+    mem[0x005] = 0x00;
+
+    mem[0x100] = 0x80; // (2) (6) Add 10 to register 0
+    mem[0x101] = 0x14;
+
+    mem[0x102] = 0x80; // (3) (7) Add 10 to register 0, in sequence
+    mem[0x103] = 0x14;
+
+    mem[0x104] = 0x00; // (4) (8) Return the function call
+    mem[0x105] = 0xEE;
 
     cpu.run();
 
-    assert_eq!(cpu.registers[0], 50);
+    assert_eq!(cpu.registers[0], 45);
 
-    println!("5+10+15+20={}", cpu.registers[0]);
+    println!("5 +(10 + 10) +(10 +10)={}", cpu.registers[0]);
 }
